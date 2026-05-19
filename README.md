@@ -4,9 +4,6 @@
 
 它是一个小巧、自包含的创作玩具：在 14×14 的网格上放下方块，一座迷你村庄就在你眼前慢慢成形。这里没有目标、没有资源刷取、没有分数，只有像拼图一样不断摆放、调整，直到画面看起来恰到好处的乐趣。
 
-**🌐 在线游玩：<https://mykonos-island-voxels.netlify.app>**
-
-![Mykonos Island Voxels — 示例场景](full%20city.png)
 
 ---
 

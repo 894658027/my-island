@@ -15,7 +15,7 @@ const TOOL_ICONS = {
     grid:  drawGridIcon,
     save:  drawSaveIcon,
     reset: drawResetIcon,
-};
+}; 
 
 const TOOL_BUTTONS = [
     { id: 'place',  label: '放置' },

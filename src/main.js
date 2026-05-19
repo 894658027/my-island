@@ -42,7 +42,7 @@ async function main() {
 
     // Try to restore previous session.
     if (game.load()) {
-        ui.showToast('欢迎回来');
+        ui.showToast('欢迎回来'); 
     } else {
         seedExampleVillage(game);
     }

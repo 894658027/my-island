@@ -18,7 +18,7 @@ import { cellToScreen } from '../grid/IsoGrid.js';
 import { playPlacementFor } from '../ui/Audio.js';
 
 export class Game {
-    constructor(canvas, ui = null) {
+    constructor(canvas, ui = null) { 
         this.canvas = canvas;
         this.tileMap = new TileMap();
         this.camera = new Camera();

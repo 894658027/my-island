@@ -30,6 +30,7 @@ export class AssetPalette {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'tab';
+            // btn.textContent = c[0].toUpperCase() + c.slice(1);
             btn.textContent = CATEGORY_LABELS[c] ?? c;
             btn.addEventListener('click', () => {
                 playUiClick();

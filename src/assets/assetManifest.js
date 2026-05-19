@@ -49,7 +49,7 @@ const TO = O('terrain', 1);
 
 export const ASSET_MANIFEST = [
     // ── TERRAIN ───────────────────────────────────────────────────
-    { ...T('grass',    '草地'),     tileLike: true, builder: A.tileGrass },
+    { ...T('grass',    '草地'),     tileLike: true, builder: A.tileGrass }, 
     { ...T('path',     '石路'),     tileLike: true, builder: A.tileStonePath },
     { ...T('sand',     '沙地'),     tileLike: true, builder: A.tileSand },
     { ...T('stone',    '白石地面'), tileLike: true, builder: A.tileWhiteStone },
