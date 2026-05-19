@@ -1,20 +1,18 @@
 /**
  * TileMap.js
  *
- * Stores the world's two layers:
- *   - terrain: a 2D grid of asset ids (one per cell).
- *   - objects: a list of placed objects, each occupying one or more cells.
+ * 存储整个世界的两层数据：
+ *   - terrain：二维地形网格，每个格子保存一个地形素材 id。
+ *   - objects：已放置模型列表，每个模型可以占用一个或多个格子。
  *
- * The TileMap is the single source of truth used by the renderer, the
- * placement system, and the save system.
+ * TileMap 是地图状态的唯一数据源。渲染器、放置系统、保存系统都以它为准。
  *
- * Performance notes:
- *   - We keep an `_occupancy` grid (cell → owning object) so `objectAt`
- *     and `isFreeFor` are O(1) per cell instead of scanning the object
- *     list. With many placements the renderer used to spend most of its
- *     time inside `canPlace` during hover, which is now flat.
- *   - `terrainVersion` and `objectsVersion` are bumped on every mutation
- *     so the renderer can cheaply detect cache invalidation.
+ * 性能说明：
+ *   - `_occupancy` 是一张“格子 → 占用它的模型”的索引表。
+ *     objectAt 和 isFreeFor 可以按格子 O(1) 查询，不需要每次遍历 objects。
+ *     鼠标悬停时 canPlace 会高频调用，这个索引能避免预览卡顿。
+ *   - terrainVersion / objectsVersion 会在数据变化时递增，
+ *     渲染器据此判断哪些缓存图层需要重建。
  */
 
 import { CONFIG } from '../config.js';
@@ -24,12 +22,11 @@ export class TileMap {
         this.width = width;
         this.height = height;
         this.terrain = new Array(width * height).fill(null);
-        this.objects = []; // PlacedObject[]
+        this.objects = []; // 已放置模型列表，元素类型是 PlacedObject
         this._occupancy = new Array(width * height).fill(null);
         this._nextId = 1;
 
-        // Bumped on any change; the renderer compares stored versions to
-        // know when to rebuild its cached layer canvases.
+        // 任意数据变化都会递增版本号，渲染器用它判断是否需要重建缓存画布。
         this.terrainVersion = 0;
         this.objectsVersion = 0;
     }
@@ -54,15 +51,18 @@ export class TileMap {
     clearTerrain(gx, gy) { this.setTerrain(gx, gy, null); }
 
     /**
-     * Returns the object covering (gx, gy), or null. O(1) thanks to the
-     * occupancy index.
+     * 返回覆盖 (gx, gy) 的模型；如果没有模型则返回 null。
+     * 依赖 _occupancy 索引，因此是按格子 O(1) 查询。
      */
     objectAt(gx, gy) {
         if (!this.inBounds(gx, gy)) return null;
         return this._occupancy[gy * this.width + gx] || null;
     }
 
-    /** Returns true if the rectangle [gx..gx+w, gy..gy+d] is free of objects. */
+    /**
+     * 判断以 (gx, gy) 为左后角、大小为 w x d 的矩形 footprint 是否可用。
+     * 目前只检查边界和 object 占用，不检查地形类型。
+     */
     isFreeFor(gx, gy, w, d) {
         for (let ix = 0; ix < w; ix++)
         for (let iy = 0; iy < d; iy++) {
@@ -109,8 +109,8 @@ export class TileMap {
     }
 
     /**
-     * Replace contents from a serialized snapshot.
-     * objectFactory(data) -> PlacedObject lets us avoid a circular import.
+     * 用保存文件里的快照替换当前地图内容。
+     * objectFactory(data) -> PlacedObject 由调用方传入，用来避免模块循环依赖。
      */
     deserialize(data, objectFactory) {
         if (!data) return;

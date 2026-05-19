@@ -1,9 +1,9 @@
 /**
  * Game.js
  *
- * Top-level game controller. Owns the world (TileMap), camera, renderer,
- * input manager, placement system, and UI. Exposes a small intent API
- * (setTool, selectAsset, save, reset, …) consumed by the UI.
+ * 游戏的顶层控制器，负责把世界数据、相机、渲染器、输入、放置系统和 UI 串起来。
+ * UI 与输入层不会直接改地图，而是通过这里暴露的意图方法
+ * （setTool、selectAsset、save、reset 等）进入同一套状态流。
  */
 
 import { CONFIG } from '../config.js';
@@ -26,26 +26,25 @@ export class Game {
         this.placement = new PlacementSystem(this.tileMap);
         this.input = new InputManager(canvas, this.camera, this);
 
-        // Any camera mutation (pan/zoom/recenter) needs the next frame
-        // re-rendered. The renderer itself is otherwise idle.
+        // 相机发生平移、缩放或重新居中时，需要通知渲染器下一帧重画。
+        // 渲染器本身会在无变化时跳过昂贵绘制。
         this.camera.onChange(() => this.renderer.markDirty());
 
-        // Default selection
+        // 默认进入放置模式，并选中第一个地形素材。
         this.tool = 'place';                  // 'place' | 'erase' | 'pan'
         this.category = 'terrain';
         this.selectedAssetId = ASSET_MANIFEST.find(a => a.category === 'terrain').id;
         this.ui = ui;
 
-        // Preview-only flip state for the current selection. Toggled by the
-        // user (H / V) before commit; the values are baked into the
-        // PlacedObject when the asset is placed.
+        // 当前选中素材的预览翻转状态。用户按 H / V 切换；
+        // 真正放置时会把这两个值写入 PlacedObject。
         this.flipH = false;
         this.flipV = false;
 
-        // Center camera over grid
+        // 启动时把相机对准网格中心。
         this._centerCamera();
 
-        // Animation loop
+        // 启动渲染循环。
         this._loop = this._loop.bind(this);
         requestAnimationFrame(this._loop);
     }
@@ -56,7 +55,7 @@ export class Game {
         this.camera.centerOn(c.x, c.y, w, h);
     }
 
-    /* ── Intents from UI / input ──────────────────────────────── */
+    /* ── 来自 UI / 输入层的操作意图 ───────────────────────────── */
 
     setTool(t) {
         this.tool = t;
@@ -71,7 +70,7 @@ export class Game {
     setCategory(cat) {
         if (this.category === cat) return;
         this.category = cat;
-        // Auto-select first asset of that category.
+        // 切换分类时，自动选中该分类下的第一个素材。
         const first = ASSET_MANIFEST.find(a => a.category === cat);
         if (first) this.selectedAssetId = first.id;
         this._resetFlip();
@@ -86,7 +85,7 @@ export class Game {
         this.selectedAssetId = id;
         this.category = a.category;
         if (changed) this._resetFlip();
-        // Picking an asset implies "place" mode.
+        // 选择素材意味着用户准备放置；如果当前是擦除模式，就切回放置模式。
         if (this.tool === 'erase') this.setTool('place');
         this.renderer.markDirty();
         this.ui?.update();
@@ -146,20 +145,18 @@ export class Game {
     }
 
     /**
-     * Carpet the entire grid with grass in one click. Empty cells get a
-     * fresh grass tile; cells whose terrain is already something else
-     * (path, sand, water) are left alone so the user doesn't lose any
-     * intentional terrain work. Each tile is queued through the same
-     * staggered animation pipeline as the starter scene so the fill
-     * ripples diagonally across the island instead of snapping in flat.
+     * 一键给整张地图补草地。只有空地形格会被填充；
+     * 已经放了石路、沙地、水面等地形的格子会保留，避免覆盖玩家已有设计。
      *
-     * Returns the number of cells that were actually filled.
+     * 每个格子会走和初始场景相同的错峰动画，看起来像草地沿对角线铺开，
+     * 而不是整张地图瞬间闪一下。
+     *
+     * 返回实际填充的格子数量。
      */
     fillGrass() {
         const W = this.tileMap.width;
         const H = this.tileMap.height;
-        // Same wave timing as the starter scene reveal so the two feel
-        // like one consistent visual language.
+        // 与初始场景揭幕动画保持一致的波纹节奏。
         const STEP_MS = 32;
         let filled = 0;
         for (let gy = 0; gy < H; gy++)
@@ -170,8 +167,7 @@ export class Game {
             }
         }
         if (filled > 0) {
-            // One sound at the start; the per-tile placement audio path
-            // would fire ~196 times in a fraction of a second otherwise.
+            // 只在开始时播放一次音效；否则每格都播放会在瞬间叠出大量声音。
             playPlacementFor('grass');
             this.ui?.showToast(`已用草地铺满 ${filled} 个格子`);
         } else {
@@ -180,7 +176,7 @@ export class Game {
         return filled;
     }
 
-    /* ── Mouse callbacks (called by InputManager) ─────────────── */
+    /* ── InputManager 回调：悬停、放置、擦除 ─────────────────── */
 
     onHover(cell) {
         const prev = this.renderer.hoverCell;
@@ -197,17 +193,15 @@ export class Game {
             this.renderer.previewAssetId = null;
             this.renderer.previewValid = true;
         }
-        // Only invalidate the next frame when the highlighted cell or its
-        // validity actually changed. Hover events fire on every mousemove
-        // pixel, so this matters.
+        // 鼠标移动事件非常频繁；只有悬停格子变化时才标记重绘，避免空转。
         if (!sameCell) this.renderer.markDirty();
     }
 
     onPrimaryClick(gx, gy) {
         if (!this.tileMap.inBounds(gx, gy)) return;
         if (this.tool === 'erase') {
-            // Capture what's about to be removed so we can pick the right
-            // SFX (water erase splashes, everything else thuds).
+            // 先记录将被删除的素材，用于选择合适的音效。
+            // 例如擦除水面播放水声，其他素材播放普通放置/移除声。
             const objHere = this.tileMap.objectAt(gx, gy);
             const terrainHere = this.tileMap.getTerrain(gx, gy);
             const targetId = objHere ? objHere.assetId : terrainHere;
@@ -242,7 +236,7 @@ export class Game {
     }
 
     onSecondaryClick(gx, gy) {
-        // Right click always erases.
+        // 右键不受当前工具影响，始终执行擦除。
         if (!this.tileMap.inBounds(gx, gy)) return;
         const objHere = this.tileMap.objectAt(gx, gy);
         const terrainHere = this.tileMap.getTerrain(gx, gy);
@@ -254,12 +248,10 @@ export class Game {
     }
 
     /**
-     * Place an asset and queue its elastic placement animation, optionally
-     * delayed by `opts.delay` milliseconds. Used by the starter-scene
-     * reveal to ripple the seeded village in back-to-front so first-run
-     * players see the world build itself instead of just appearing.
+     * 放置素材并安排弹性落位动画，可通过 opts.delay 延迟开始。
+     * 初始场景使用它让村庄从后到前依次出现，玩家能看到世界逐步搭建起来。
      *
-     * Returns the placement result (or null if the placement was rejected).
+     * 返回放置结果；如果 canPlace 拒绝放置，则返回 null。
      */
     placeAndAnimate(assetId, gx, gy, opts = {}) {
         const result = this.placement.place(assetId, gx, gy, {
@@ -288,13 +280,11 @@ export class Game {
         return result;
     }
 
-    /* ── Frame loop ───────────────────────────────────────────── */
+    /* ── 帧循环 ──────────────────────────────────────────────── */
 
     _loop() {
-        // The renderer skips its own work when nothing has changed and
-        // there are no animations running, so this loop is effectively
-        // free at idle. We still keep `requestAnimationFrame` ticking so
-        // we resume instantly when input or animations resume.
+        // 渲染器在无脏标记、无动画时会自行跳过绘制，所以空闲时成本很低。
+        // requestAnimationFrame 仍保持运转，保证输入或动画恢复时能立刻响应。
         this.renderer.draw();
         requestAnimationFrame(this._loop);
     }

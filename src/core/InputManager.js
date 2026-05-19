@@ -1,35 +1,31 @@
 /**
  * InputManager.js
  *
- * Handles mouse, touch, and keyboard input on the game canvas, translating
- * it to game-level events (place, erase, hover, pan, zoom).
+ * 统一处理画布上的鼠标、触摸和键盘输入，并把浏览器事件转换成
+ * Game 能理解的高层操作：放置、擦除、悬停预览、平移和缩放。
  *
- * Touch model (mirrors the desktop mouse/keyboard model as closely as a
- * fingers-only device allows):
+ * 触控模型尽量对齐桌面端操作：
  *
- *   • Single-finger tap            → primary click (place / erase, depending on tool)
- *   • Single-finger long-press     → secondary click (erase) — the "right click" stand-in
- *   • Single-finger drag (place)   → brush-place across cells
- *   • Single-finger drag (erase)   → brush-erase across cells
- *   • Single-finger drag (pan)     → pan camera
- *   • Two-finger pinch             → zoom in / out, anchored at the gesture midpoint
- *   • Two-finger drag              → pan (always works, regardless of active tool)
+ *   • 单指点击             → 主操作（根据当前工具放置或擦除）
+ *   • 单指长按             → 次操作（擦除），相当于移动端右键
+ *   • 单指拖动（放置工具） → 跨格子连续刷涂放置
+ *   • 单指拖动（擦除工具） → 跨格子连续刷涂擦除
+ *   • 单指拖动（平移工具） → 平移相机
+ *   • 双指捏合             → 以双指中心为锚点缩放
+ *   • 双指拖动             → 平移相机，不受当前工具影响
  */
 
 import { CONFIG } from '../config.js';
 import { screenToCell } from '../grid/IsoGrid.js';
 import { playUiClick } from '../ui/Audio.js';
 
-// How long a stationary single-finger touch must be held before we
-// treat it as the "erase" gesture. Tuned to feel responsive but not
-// trip while panning slowly.
+// 单指静止按住多久后触发“长按擦除”。这个值需要在响应速度和误触之间平衡。
 const LONG_PRESS_MS = 420;
-// Pixel distance the finger may drift before we cancel the long-press
-// timer and reclassify the gesture as a drag.
+// 手指允许轻微漂移；超过这个像素距离后，取消长按计时并改判为拖动。
 const TOUCH_MOVE_THRESHOLD = 8;
-// Max pixels a finger may drift and still register as a tap on release.
+// 松手时仍可判定为点击的最大位移。
 const TAP_SLOP = 10;
-// Max ms a touch may stay down and still register as a tap on release.
+// 按住时长超过该值后，松手不再算普通点击。
 const TAP_MAX_MS = 350;
 
 export class InputManager {
@@ -46,8 +42,7 @@ export class InputManager {
         this._brushActive = false;
         this._lastBrushKey = null;
 
-        // Touch state — kept entirely separate from the mouse path so the
-        // two input modes don't fight each other on hybrid devices.
+        // 触控状态独立于鼠标状态，避免触屏笔记本等混合设备上两套事件互相干扰。
         this._touches = new Map(); // touch.identifier → { x, y, startX, startY, startTime }
         this._touchMode = null;    // null | 'single' | 'pinch'
         this._touchMoved = false;
@@ -56,7 +51,7 @@ export class InputManager {
         this._lastBrushTouchKey = null;
         this._pinchLastDist = 0;
         this._pinchLastMid = { x: 0, y: 0 };
-        this._lastTouchScreen = null; // last x/y of the active finger, for tap on release
+        this._lastTouchScreen = null; // 当前活动手指的最后位置，用于松手点击判断
 
         this._bind();
     }
@@ -69,9 +64,8 @@ export class InputManager {
         c.addEventListener('contextmenu', e => e.preventDefault());
         c.addEventListener('wheel',       e => this._onWheel(e), { passive: false });
 
-        // Touch handlers — passive: false so we can preventDefault and
-        // stop the browser from scrolling, pinch-zooming the page, or
-        // firing synthetic mouse events that would double-trigger us.
+        // 触控事件必须使用 passive: false，才能 preventDefault 阻止页面滚动、
+        // 浏览器自身缩放，以及移动端合成鼠标事件造成的重复触发。
         c.addEventListener('touchstart',  e => this._onTouchStart(e),  { passive: false });
         c.addEventListener('touchmove',   e => this._onTouchMove(e),   { passive: false });
         c.addEventListener('touchend',    e => this._onTouchEnd(e),    { passive: false });
@@ -129,7 +123,7 @@ export class InputManager {
             return;
         }
 
-        // Pan with middle button always; with left only in pan mode.
+        // 中键始终平移；左键只有在 pan 工具或按住 Shift 拖动时才平移。
         const panMode = this.game.tool === 'pan';
         if (this._pressedButton === 1 || panMode || (this._dragMoved && e.shiftKey)) {
             this.camera.pan(dx, dy);
@@ -181,7 +175,7 @@ export class InputManager {
         this.camera.zoomAt(sx, sy, factor);
     }
 
-    /* ── Touch input ──────────────────────────────────────────── */
+    /* ── 触控输入 ─────────────────────────────────────────────── */
 
     _touchToCanvas(touch) {
         const rect = this.canvas.getBoundingClientRect();
@@ -195,8 +189,7 @@ export class InputManager {
     }
 
     _onTouchStart(e) {
-        // Stop the browser from generating synthetic mouse events,
-        // scrolling, or doing the iOS double-tap-zoom.
+        // 阻止浏览器生成合成鼠标事件、滚动页面或触发 iOS 双击缩放。
         e.preventDefault();
 
         for (const t of e.changedTouches) {
@@ -216,13 +209,11 @@ export class InputManager {
             this._touchSecondaryFired = false;
             this._lastBrushTouchKey = null;
 
-            // Hover the cell under the finger right away so the placement
-            // preview tracks where the user touched.
+            // 手指按下时立即更新悬停格子，让放置预览从触点位置开始跟随。
             const [tp] = this._touches.values();
             this.game.onHover(this._screenToCellXY(tp.x, tp.y));
 
-            // Long-press = erase. We schedule it once at touch-down and
-            // any drift / lift / second finger cancels it.
+            // 长按等同擦除。只在按下时安排一次计时；手指移动、抬起或第二根手指加入都会取消。
             this._clearLongPressTimer();
             this._longPressTimer = setTimeout(() => {
                 this._longPressTimer = null;
@@ -233,9 +224,7 @@ export class InputManager {
                 if (navigator.vibrate) navigator.vibrate(18);
             }, LONG_PRESS_MS);
         } else if (n >= 2) {
-            // Promote to pinch. Cancel any in-flight single-finger
-            // intent so we don't accidentally place when the second
-            // finger lands a few ms later than the first.
+            // 升级为双指手势。取消单指意图，避免第二根手指稍晚落下时误触发放置。
             this._clearLongPressTimer();
             this._touchMode = 'pinch';
             this._touchSecondaryFired = false;
@@ -252,9 +241,7 @@ export class InputManager {
             const tp = this._touches.get(t.identifier);
             if (!tp) continue;
             const { x, y } = this._touchToCanvas(t);
-            // Track per-frame delta on the touch itself so a single
-            // pan-tool finger can scroll the world without us having to
-            // remember the last position globally.
+            // 在 touch 对象上记录每帧位移，单指平移时可以直接计算相机偏移。
             tp.lastX = tp.x; tp.lastY = tp.y;
             tp.x = x; tp.y = y;
             this._lastTouchScreen = { x, y };
@@ -268,8 +255,7 @@ export class InputManager {
                 this._touchMoved = true;
                 this._clearLongPressTimer();
             }
-            // Always keep the hover preview tracking the finger so the
-            // valid/invalid state visualises correctly while dragging.
+            // 拖动时持续更新预览格子，红/蓝可放置状态才能跟着手指实时变化。
             const cell = this._screenToCellXY(tp.x, tp.y);
             this.game.onHover(cell);
 
@@ -284,9 +270,7 @@ export class InputManager {
                 const key = `${cell.gx},${cell.gy}`;
                 if (key !== this._lastBrushTouchKey) {
                     this._lastBrushTouchKey = key;
-                    // Primary click respects the active tool — in erase
-                    // mode it erases, in place mode it places. Same as
-                    // the mouse brush path.
+                    // 主操作会尊重当前工具：擦除工具下擦除，放置工具下放置，和鼠标刷涂一致。
                     this.game.onPrimaryClick(cell.gx, cell.gy);
                 }
             }
@@ -296,13 +280,11 @@ export class InputManager {
             const dist = Math.max(1, this._distance(a, b));
             const mid  = this._midpoint(a, b);
 
-            // Frame-relative scale: the camera's zoom is already
-            // accumulating, so we only multiply by the change since
-            // last frame. This stays stable when fingers add or lift.
+            // 使用相邻两帧之间的缩放比例；相机缩放值本身会累积，这样手指加入/离开时更稳定。
             const factor = dist / this._pinchLastDist;
             if (factor !== 1) this.camera.zoomAt(mid.x, mid.y, factor);
 
-            // Two-finger pan: midpoint drift moves the camera too.
+            // 双指中心点移动时，同时平移相机。
             const pdx = mid.x - this._pinchLastMid.x;
             const pdy = mid.y - this._pinchLastMid.y;
             if (pdx || pdy) this.camera.pan(pdx, pdy);
@@ -315,8 +297,7 @@ export class InputManager {
     _onTouchEnd(e) {
         e.preventDefault();
 
-        // Snapshot the finger that's lifting so we can do tap-on-release
-        // from its actual final position (the map entry is about to go).
+        // 先保存即将抬起的手指信息；Map 里的记录马上会被删除，点击判定还需要最终位置。
         let lifted = null;
         for (const t of e.changedTouches) {
             lifted = this._touches.get(t.identifier) || lifted;
@@ -346,11 +327,8 @@ export class InputManager {
             this._lastBrushTouchKey = null;
             this._clearLongPressTimer();
         } else if (remaining === 1 && this._touchMode === 'pinch') {
-            // Dropped from pinch back to single — restart the single
-            // path with the surviving finger as a fresh "drag" so we
-            // don't snap-pan from its old start position. We also
-            // suppress tap detection (mark moved) since the user is
-            // mid-gesture, not tapping.
+            // 双指退回单指时，把剩下的手指当作新的拖动起点，避免从旧位置突然跳动。
+            // 同时标记为已移动，防止手势中途被误判成一次点击。
             const [tp] = this._touches.values();
             tp.startX = tp.x;
             tp.startY = tp.y;
@@ -359,7 +337,7 @@ export class InputManager {
             tp.lastY = tp.y;
             this._touchMode = 'single';
             this._touchMoved = true;
-            this._touchSecondaryFired = true; // belt + suspenders: also blocks tap
+            this._touchSecondaryFired = true; // 再加一道保护，阻止松手点击触发
         }
     }
 
@@ -380,7 +358,7 @@ export class InputManager {
     }
 
     _onKeyDown(e) {
-        // Skip when user is typing in an input.
+        // 用户正在输入文本时不响应快捷键，避免打字时误触发工具切换。
         if (e.target instanceof HTMLInputElement
             || e.target instanceof HTMLTextAreaElement) return;
         const k = e.key.toLowerCase();
