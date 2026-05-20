@@ -125,6 +125,35 @@ export class Game {
         this.ui?.update();
     }
 
+    /**
+     * 切换地形之间是否显示菱形拼缝（也就是用户感知的"地块边缘那条线"）。
+     * 关闭时，渲染器会让每块地形向外多画 1px，相邻菱形互相覆盖，看不到缝。
+     */
+    toggleBorders() {
+        this.renderer.showBorders = !this.renderer.showBorders;
+        this.renderer.markDirty();
+        this.ui?.hud?.syncToggles();
+        this.ui?.update();
+    }
+
+    /**
+     * 演示用：调用 3 秒后自动移除地块边缘的"网线"。
+     * 如果当前已经是无线状态则什么也不做。
+     * 走的是 toggleBorders 同一条状态流，工具栏按钮和 HUD 开关会一起同步。
+     */
+    test() {
+        console.log('[test] 已安排，3 秒后将尝试移除网线。当前 showBorders =',
+            this.renderer.showBorders);
+        return setTimeout(() => {
+            if (this.renderer.showBorders) {
+                this.toggleBorders();
+                console.log('[test] 计时到，已隐藏网线');
+            } else {
+                console.log('[test] 计时到，但当前已经是无线状态，跳过');
+            }
+        }, 3000);
+    }
+
     save() {
         const ok = SaveSystem.save(this.tileMap, this.camera);
         this.ui?.showToast(ok ? '小岛已保存' : '保存失败');

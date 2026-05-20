@@ -117,6 +117,10 @@ export class Renderer {
         this._platformGridH  = -1;
         this._terrainCanvas  = null;
         this._terrainVersion = -1;
+        // showBorders 在缓存里也算一个维度：关闭时每块地形会向外多绘 1px，
+        // 用相邻菱形互相覆盖那条 1px 拼缝来达到“无线”效果。
+        // 切换后通过这个字段对比，强制重建一次地形缓存。
+        this._terrainBordersBaked = true;
         this._objectsCanvas  = null;
         this._objectsVersion = -1;
         this._objectsAnimCount = 0;
@@ -505,9 +509,16 @@ export class Renderer {
     /* ── Terrain cache ────────────────────────────────────────── */
 
     _ensureTerrainCache() {
-        if (this._terrainCanvas && this._terrainVersion === this.tileMap.terrainVersion) {
+        if (this._terrainCanvas
+            && this._terrainVersion === this.tileMap.terrainVersion
+            && this._terrainBordersBaked === this.showBorders) {
             return;
         }
+        this._terrainBordersBaked = this.showBorders;
+        // showBorders 为 false 时，每块地形朝四周外扩这么多像素，
+        // 让相邻菱形互相盖住边缘那条 1px 拼缝。
+        // 值太小没效果、太大菱形顶部会越界露出来，1 是经验值。
+        const overdraw = this.showBorders ? 0 : 1;
         if (!this._worldBounds) this._worldBounds = this._computeWorldBounds();
         const wb = this._worldBounds;
         const cw = wb.w * CACHE_SCALE;
@@ -548,7 +559,13 @@ export class Renderer {
             const dx = x - asset.anchorX;
             const dy = y - asset.anchorY;
             const src = asset.displayCanvas || asset.canvas;
-            ctx.drawImage(src, dx, dy, asset.width, asset.height);
+            ctx.drawImage(
+                src,
+                dx - overdraw,
+                dy - overdraw,
+                asset.width + overdraw * 2,
+                asset.height + overdraw * 2,
+            );
         }
 
         ctx.setTransform(1, 0, 0, 1, 0, 0);

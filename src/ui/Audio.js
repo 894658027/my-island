@@ -1,14 +1,21 @@
 /**
  * Audio.js
  *
- * Tiny one-shot SFX player for in-game cues. Each clip is loaded once,
- * decoded into an AudioBuffer, and played via short-lived
- * AudioBufferSourceNodes so that rapid-fire triggers overlap cleanly
- * (instead of restarting / cutting off a single shared <audio> element).
+ * 项目里所有"短音效"的统一管理。每段音频只下载/解码一次，
+ * 播放时新建一个临时的 AudioBufferSourceNode，让连续点击/刷涂的
+ * 多次触发能自然叠播，而不是像共享 <audio> 元素那样互相打断。
  *
- * Audio policies on every modern browser require a user gesture before
- * sound can play, so we lazily resume the AudioContext on the first
- * trigger and silently ignore the call if the context is still suspended.
+ * 现代浏览器要求"必须先有用户手势"才能播声音，所以这里在第一次
+ * 触发时再尝试 resume AudioContext；如果还处于 suspended，就静默跳过，
+ * 不会报错也不会卡住调用方。
+ *
+ * 二次开发常见入口：
+ *   - 加新音效：在 loadUiAudio() 里 registerClip('myKey', 'xxx.ogg')，
+ *     再 export 一个 play wrapper 即可。
+ *   - 调整连续放置时的播放频率：改 registerClip 的 minIntervalMs。
+ *   - 给某些素材换音效：在底部的 STONE_ASSET_IDS / WOOD_ASSET_IDS
+ *     等集合里调整归属，或者在 playPlacementFor() 里加新分支。
+ *   - 整体静音：调用 setUiAudioEnabled(false)，会影响所有 play()。
  */
 
 const DEFAULT_VOLUME = 0.55;
@@ -16,7 +23,7 @@ const DEFAULT_VOLUME = 0.55;
 let _audioCtx = null;
 let _enabled = true;
 
-// Per-clip state. Each entry is { buffer, loading, lastPlayAt, minIntervalMs }.
+// 每段音效的状态表。值的形状为：{ buffer, loading, lastPlayAt, minIntervalMs }。
 const _clips = new Map();
 
 function getCtx() {
@@ -32,13 +39,12 @@ function getCtx() {
 }
 
 /**
- * Fetch + decode a clip and register it under `name`. Safe to call
- * multiple times — re-registering with the same name returns the
- * memoised promise. Failures are logged and swallowed: a missing
- * sound file should never break the UI.
+ * 下载 + 解码一段音效，并以 `name` 作为 key 注册到全局缓存里。
  *
- * `minIntervalMs` debounces rapid-fire triggers (default 18ms keeps a
- * keyboard-repeat from machine-gunning the clip).
+ * - 多次调用同一个 name 是安全的：会复用之前的 loading Promise。
+ * - 任何错误都只会打 warn，不会抛——音效文件缺失不应该影响 UI。
+ * - minIntervalMs 用来防抖：相同音效在该毫秒数内的重复触发会被忽略，
+ *   避免键盘连按或刷涂时音频被"机关枪"式叠播。
  */
 export async function registerClip(name, url, { minIntervalMs = 18 } = {}) {
     let entry = _clips.get(name);
@@ -67,9 +73,10 @@ export async function registerClip(name, url, { minIntervalMs = 18 } = {}) {
 }
 
 /**
- * Trigger a registered clip. No-op when audio is disabled, the buffer
- * hasn't loaded yet, or the AudioContext is still suspended waiting for
- * a user gesture (the very first interaction primes it).
+ * 触发一段已注册音效。以下情况都会静默跳过：
+ *   - 音频整体被 setUiAudioEnabled(false) 关掉了；
+ *   - 对应音频还没下载完；
+ *   - AudioContext 仍处于 suspended（需要用户手势）。
  */
 export function play(name, volume = DEFAULT_VOLUME) {
     if (!_enabled) return;
@@ -94,22 +101,26 @@ export function play(name, volume = DEFAULT_VOLUME) {
         src.connect(gain).connect(ctx.destination);
         src.start(0);
     } catch {
-        /* swallow — sound failures are non-fatal */
+        /* 音频失败不应中断游戏流程，直接吞掉 */
     }
 }
 
-/* ── Convenience wrappers for the clips we ship ─────────────────── */
+/* ── 项目内置音效的快捷封装 ─────────────────────────────────────── */
 
 export async function loadUiAudio() {
-    // Seven clips: a soft click for menus / palette / toolbar / shortcuts,
-    // a generic "thud" fallback, a wet splash for water tiles, a chunky
-    // knock for stone / brick / plaster masonry, a hollow tap for fences
-    // / wooden decorations, a soft rustle for small vegetation, and a
-    // leafier whoosh for trees / large vegetation. All loaded in parallel.
+    // 一共注册 7 段音效，按用途分别是：
+    //   ui              ：菜单/工具栏/素材面板/快捷键通用的轻"咔"声；
+    //   placement       ：未匹配到具体材质时的通用放置/移除"咚"声；
+    //   placementWater  ：放置或擦除水面瓦片时的水花声；
+    //   placementStone  ：石头/砖/白墙等建筑类的厚重敲击声；
+    //   placementWood   ：木栅栏、木质装饰、桥等的轻木敲声；
+    //   placementVeg    ：小型植被（草地/龙舌兰/花盆等）的沙沙声；
+    //   placementTree   ：大型乔木（柏树/橄榄/三角梅）的树叶簌簌声。
+    // 全部并行下载，互不阻塞。
     await Promise.all([
         registerClip('ui',                'menu_select_lightbulb.ogg',   { minIntervalMs: 18 }),
-        // Brushing across cells fires very rapidly; allow modest overlap
-        // but throttle a touch more aggressively than the UI click.
+        // 刷涂时同一种音效会被密集触发，比 UI 点击稍微节流多一点，
+        // 既保留叠播的层次感，又避免一瞬间糊成一团。
         registerClip('placement',         'new-placement.ogg',            { minIntervalMs: 35 }),
         registerClip('placementWater',    'waterPlacement.ogg',           { minIntervalMs: 50 }),
         registerClip('placementStone',    'brick-stone.ogg',              { minIntervalMs: 35 }),
@@ -128,49 +139,46 @@ export function playVegPlacement(volume = 0.6)         { play('placementVeg',   
 export function playTreePlacement(volume = 0.6)        { play('placementTree',  volume); }
 
 /**
- * Asset ids whose placement / erase should trigger the brick-stone SFX.
- * Includes the obvious stone terrain + props plus the white-plastered
- * Mykonos buildings (which are masonry under the paint).
+ * 放置/擦除时使用"石头敲击"音效的素材 id 集合。
+ * 包括明显的石头类地形和道具，以及外表是粉刷白墙、
+ * 本质上是砖石结构的 Mykonos 建筑。
  *
- * Kept as flat Sets so membership checks stay O(1) inside the per-click
- * `playPlacementFor` lookup.
+ * 用 Set 是为了在 playPlacementFor 里做 O(1) 的归属判断。
  */
 const STONE_ASSET_IDS = new Set([
-    // Terrain
+    // 地形
     'stone', 'path', 'sea_wall', 'stairs',
-    // Walls / arches / lanterns / basins
+    // 墙体/拱门/灯/盆
     'low_wall', 'corner_wall', 'archway',
     'stone_lantern', 'stone_basin', 'well',
-    // Rock clutter
+    // 散落石块
     'rocks', 'large_rock', 'mossy_stone', 'flat_stone',
     'pebbles', 'stone_pile', 'boulder',
-    // Buildings (whitewashed masonry)
+    // 建筑（粉刷的砖石结构）
     'house', 'two_story', 'cube_house', 'terrace_house', 'pergola_house',
     'villa', 'altar', 'tower_chapel', 'main_chapel', 'windmill',
 ]);
 
 /**
- * Asset ids whose placement / erase should trigger the wood / fence SFX.
- * Covers wooden fences and railings, wooden furniture and props, and
- * the wooden planter boxes / bridges in the water category.
+ * 放置/擦除时使用"木质"音效的素材 id 集合：
+ * 木栅栏、木栏杆、木家具、灯柱、木质搬运物以及水景里的木结构。
  */
 const WOOD_ASSET_IDS = new Set([
-    // Fences / railings / gates
+    // 栅栏 / 栏杆 / 门
     'blue_railing', 'gate_fence',
-    // Wooden furniture / signage
+    // 木家具 / 标牌
     'bench', 'signpost', 'banner',
-    // Lantern posts (wooden mast)
+    // 灯柱（木杆）
     'lantern_post', 'hanging_lantern',
-    // Wooden carryables
+    // 木质可搬运物
     'crate', 'hay_bale', 'storage_box', 'wood_pile', 'water_bucket',
-    // Wooden water-category structures
+    // 水景里的木结构
     'small_bridge', 'garden_bed', 'crop_patch', 'veg_garden',
 ]);
 
 /**
- * Asset ids whose placement / erase should trigger the small-vegetation
- * rustle. Includes the grass terrain plus low-lying plant props
- * (succulents, grass tufts, potted flowers).
+ * 放置/擦除时使用"小型植被沙沙声"的素材 id 集合：
+ * 草地地形 + 低矮植物道具（多肉、干草、花盆等）。
  */
 const SMALL_VEG_ASSET_IDS = new Set([
     'grass',
@@ -178,24 +186,23 @@ const SMALL_VEG_ASSET_IDS = new Set([
 ]);
 
 /**
- * Asset ids whose placement / erase should trigger the large-vegetation /
- * tree whoosh. Reserved for full trees and tall flowering plants.
+ * 放置/擦除时使用"大型植被簌簌声"的素材 id 集合：
+ * 仅留给完整树木和高大开花植物。
  */
 const LARGE_VEG_ASSET_IDS = new Set([
     'cypress', 'olive', 'bougainvillea',
 ]);
 
 /**
- * Pick the right placement SFX for a given asset id:
- *   - water tiles       → splash
- *   - stone / masonry   → brick knock
- *   - fence / wood      → hollow wood tap
- *   - small vegetation  → soft rustle
- *   - trees / large veg → leafy whoosh
- *   - everything else   → generic placement thud
+ * 按素材 id 选择对应的放置/擦除音效：
+ *   - 水面瓦片       → 水花声
+ *   - 石头/砖石       → 厚重敲击
+ *   - 栅栏/木质       → 木质敲击
+ *   - 小型植被       → 沙沙声
+ *   - 大型乔木       → 树叶簌簌声
+ *   - 其他           → 通用放置"咚"声
  *
- * Centralising the lookup here means callers don't need to know the
- * asset taxonomy.
+ * 把这套映射集中在这里，调用方就不用了解素材归属规则。
  */
 export function playPlacementFor(assetId) {
     if (assetId === 'water') {

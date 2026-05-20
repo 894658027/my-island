@@ -1,8 +1,16 @@
 /**
  * Toolbar.js
  *
- * Renders the left-side tool dock. The icons are tiny canvases drawn
- * inline (no external icon fonts), matching the rest of the asset style.
+ * 渲染左侧那条竖向工具栏。每个按钮的图标都是用 Canvas 现画的小图
+ * （不依赖外部图标字体），风格统一沿用项目的卡通插画感。
+ *
+ * 二次开发常见入口：
+ *   - 加新按钮：往 TOOL_BUTTONS 数组里加一项 { id, label }，
+ *     然后在 TOOL_ICONS 里写一个对应的 drawXxxIcon 函数，
+ *     最后在 _onClick() 的 switch 里加上对应的行为。
+ *   - 调按钮顺序：直接调整 TOOL_BUTTONS 的数组顺序。
+ *   - 改某个按钮的图标：找到 drawXxxIcon 改画法即可。
+ *   - 改按钮高亮规则（active 类）：改 update() 里的判定逻辑。
  */
 
 import { playUiClick } from './Audio.js';
@@ -22,7 +30,7 @@ const TOOL_BUTTONS = [
     { id: 'fill',   label: '铺满' },
     { id: 'erase',  label: '擦除' },
     { id: 'pan',    label: '平移' },
-    { id: 'grid',   label: '网格' },
+    { id: 'grid',   label: '边框' },
     { id: 'save',   label: '保存' },
     { id: 'reset',  label: '重置' },
 ];
@@ -37,11 +45,9 @@ export class Toolbar {
 
     _build() {
         this.root.innerHTML = '';
-        // Each icon drawer uses a 44×44 logical coordinate space
-        // (centered at 22, 22). We allocate the backing canvas at
-        // `44 × dpr_factor` so the icon stays crisp on every display
-        // density — including 3× retina iPhones where a flat 44 backing
-        // would have been visibly upsampled.
+        // 每个图标绘制函数都假设画在 44×44 的"逻辑坐标系"里、中心是 (22, 22)。
+        // 实际给 canvas 分配的像素是 44 × dprFactor，这样在高分辨率屏幕
+        // （比如 3× 的 iPhone Retina）上不会被浏览器再放大一遍而发糊。
         const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
         const dprFactor = Math.max(1, Math.min(3, Math.ceil(dpr)));
         const backing = 44 * dprFactor;
@@ -55,8 +61,8 @@ export class Toolbar {
             cv.width = backing;
             cv.height = backing;
             const ctx = cv.getContext('2d');
-            // Pre-scale so drawer logic stays in the 44×44 logical
-            // coordinate space regardless of backing density.
+            // 预先按 dprFactor 缩放，这样后续 drawXxxIcon 里都可以
+            // 用 44×44 的逻辑坐标作画，不用关心实际像素密度。
             if (dprFactor !== 1) ctx.scale(dprFactor, dprFactor);
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = 'high';
@@ -80,7 +86,7 @@ export class Toolbar {
             case 'place': this.game.setTool('place'); break;
             case 'erase': this.game.setTool('erase'); break;
             case 'pan':   this.game.setTool('pan');   break;
-            case 'grid':  this.game.toggleGrid();     break;
+            case 'grid':  this.game.toggleBorders();  break;
             case 'save':  this.game.save();           break;
             case 'reset': this.game.reset();          break;
             case 'fill':  this.game.fillGrass();      break;
@@ -89,33 +95,35 @@ export class Toolbar {
 
     update() {
         const tool = this.game.tool;
-        const grid = this.game.renderer.showGrid;
+        // "网线"按钮高亮规则：和右下 HUD 的"边框"复选框保持同一种语义——
+        // 「亮起 / 勾上」都表示「线当前是可见的」（showBorders === true）。
+        // 这样两边视觉同步，避免一边亮一边灭的违和感。
+        const bordersOn = this.game.renderer.showBorders;
         for (const [id, btn] of this.buttons) {
             btn.classList.toggle('active',
                 (id === 'place' && tool === 'place')
              || (id === 'erase' && tool === 'erase')
              || (id === 'pan'   && tool === 'pan')
-             || (id === 'grid'  && grid)
+             || (id === 'grid'  && bordersOn)
             );
         }
     }
 }
 
-/* ── Tool icons ───────────────────────────────────────────────────
+/* ── 工具按钮图标 ────────────────────────────────────────────────
  *
- * Each icon is drawn on its own 44×44 canvas, centered at (22, 22).
- * The shapes use universally-recognised metaphors so the user can
- * understand what each tool does without reading the label:
+ * 每个图标各自画在自己的 44×44 画布上、中心 (22, 22)，并尽量使用
+ * 玩家一眼能看懂的视觉隐喻，即使不看下方文字也能猜到工具的功能：
  *
- *   place → map pin (Google-Maps-style "drop here")
- *   fill  → paint bucket with green paint inside
- *   erase → classic pencil eraser block (rubber + metal collar)
- *   pan   → four-direction move arrows (Figma / Photoshop move tool)
- *   grid  → 3×3 mesh
- *   save  → floppy disk with sliding shutter + label area
- *   reset → circular arrow (refresh / undo)
+ *   place → 地图大头钉（Google Maps 那种"在这里放置"）
+ *   fill  → 油漆桶（桶里装着绿色油漆，呼应"铺草地"的含义）
+ *   erase → 经典铅笔橡皮（粉色橡皮头 + 金属箍 + 笔身）
+ *   pan   → 上下左右四向箭头（Figma / Photoshop 的"移动"图标）
+ *   grid  → 3×3 网格（即"网线/边框"按钮）
+ *   save  → 软盘（顶部金属推杆 + 下方标签区）
+ *   reset → 弧形循环箭头（刷新 / 重来）
  *
- * All icons share the cobalt ink colour so the rail reads as one set.
+ * 所有图标都用统一的钴蓝色（INK 常量），形成视觉上的一致感。
  */
 
 const INK       = '#1b5ba8';
@@ -126,20 +134,20 @@ const GRASS_DK  = '#5c8a44';
 const ERASER_PINK = '#e89a9a';
 
 function drawPlaceIcon(ctx) {
-    // Map-pin marker — the universally-recognised "drop something here"
-    // glyph. Teardrop body with a hollow circle in the bell.
+    // 地图大头钉：泪滴形外轮廓 + 中央镂空小圆，
+    // 是地图类应用里"在这里放置"通用的视觉符号。
     ctx.save();
     ctx.translate(22, 22);
 
     ctx.fillStyle = INK;
     ctx.beginPath();
-    ctx.moveTo(0, 14);                              // tip pointing down
+    ctx.moveTo(0, 14);                              // 钉尖朝下
     ctx.bezierCurveTo(-10, 4, -10, -10, 0, -10);
     ctx.bezierCurveTo(10, -10, 10, 4, 0, 14);
     ctx.closePath();
     ctx.fill();
 
-    // Inner hollow circle so the pin reads as a pin and not a balloon.
+    // 中间的小圆挖空，让它看起来像钉子而不是气球。
     ctx.fillStyle = PAPER;
     ctx.beginPath();
     ctx.arc(0, -3, 3.6, 0, Math.PI * 2);
@@ -149,12 +157,12 @@ function drawPlaceIcon(ctx) {
 }
 
 function drawFillIcon(ctx) {
-    // Paint bucket holding green paint — combines the universal "fill"
-    // metaphor with a colour that signals what gets filled (grass).
+    // 油漆桶里盛着绿色油漆——把"填充"的通用符号
+    // 和"铺草地"的颜色含义结合在一起。
     ctx.save();
     ctx.translate(22, 22);
 
-    // Bucket body (slightly wider at the top, like a real paint pail).
+    // 桶身：上口稍宽于桶底，类似真实的油漆桶。
     ctx.fillStyle = INK;
     ctx.beginPath();
     ctx.moveTo(-9, -3);
@@ -164,7 +172,7 @@ function drawFillIcon(ctx) {
     ctx.closePath();
     ctx.fill();
 
-    // Paint inside (green ellipse "viewed from above" through the rim).
+    // 桶内油漆：俯视角的椭圆，外圈用深绿、内层用更深的绿做高光。
     ctx.fillStyle = GRASS;
     ctx.beginPath();
     ctx.ellipse(0, -3, 9, 2.6, 0, 0, Math.PI * 2);
@@ -174,7 +182,7 @@ function drawFillIcon(ctx) {
     ctx.ellipse(0, -3, 7, 1.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Wire handle arching above the bucket.
+    // 桶上方的金属提手。
     ctx.strokeStyle = INK;
     ctx.lineWidth = 1.8;
     ctx.lineCap = 'round';
@@ -186,14 +194,13 @@ function drawFillIcon(ctx) {
 }
 
 function drawEraseIcon(ctx) {
-    // Classic pencil eraser — pink rubber tip + metal collar +
-    // cobalt body. Tilted like a real eraser caught mid-stroke, with
-    // a small dust speck below to reinforce the "erase" meaning.
+    // 经典铅笔橡皮：粉色橡皮头 + 金属箍 + 钴蓝笔身，
+    // 整体微微倾斜，加上下方几粒橡皮屑，强化"擦除"的动作感。
     ctx.save();
     ctx.translate(22, 22);
     ctx.rotate(-0.5);
 
-    // Cobalt body (the wood/plastic part of the eraser)
+    // 钴蓝色笔身（铅笔木质/塑料部分）。
     ctx.fillStyle = INK;
     ctx.beginPath();
     ctx.moveTo(-2, -7);
@@ -203,7 +210,7 @@ function drawEraseIcon(ctx) {
     ctx.closePath();
     ctx.fill();
 
-    // Pink rubber tip (the part that does the erasing — leftmost)
+    // 粉色橡皮头（真正用来"擦"的部分，画在最左侧）。
     ctx.fillStyle = ERASER_PINK;
     ctx.beginPath();
     ctx.moveTo(-11, -7);
@@ -213,13 +220,13 @@ function drawEraseIcon(ctx) {
     ctx.closePath();
     ctx.fill();
 
-    // Metal collar separating the two
+    // 中间的金属箍，分隔橡皮头和笔身。
     ctx.fillStyle = PAPER;
     ctx.fillRect(-3, -7, 1.5, 14);
 
     ctx.restore();
 
-    // Eraser shavings below — sells the "erasing motion" meaning.
+    // 下方的橡皮屑，强调"擦动过"的动作。
     ctx.save();
     ctx.translate(22, 22);
     ctx.fillStyle = INK;
@@ -230,17 +237,17 @@ function drawEraseIcon(ctx) {
 }
 
 function drawPanIcon(ctx) {
-    // Four-direction move arrows — the universal move/pan glyph used by
-    // Figma, Photoshop, Sketch, and basically every design tool.
+    // 上下左右四向箭头——Figma / Photoshop / Sketch 等设计软件里
+    // 通用的"移动 / 平移"图标。
     ctx.save();
     ctx.translate(22, 22);
     ctx.fillStyle = INK;
 
-    // Central "+" stem
+    // 中央十字主干。
     ctx.fillRect(-2, -7, 4, 14);
     ctx.fillRect(-7, -2, 14, 4);
 
-    // Top arrowhead
+    // 上箭头。
     ctx.beginPath();
     ctx.moveTo(0, -12);
     ctx.lineTo(-5, -7);
@@ -248,7 +255,7 @@ function drawPanIcon(ctx) {
     ctx.closePath();
     ctx.fill();
 
-    // Bottom arrowhead
+    // 下箭头。
     ctx.beginPath();
     ctx.moveTo(0, 12);
     ctx.lineTo(-5, 7);
@@ -256,7 +263,7 @@ function drawPanIcon(ctx) {
     ctx.closePath();
     ctx.fill();
 
-    // Left arrowhead
+    // 左箭头。
     ctx.beginPath();
     ctx.moveTo(-12, 0);
     ctx.lineTo(-7, -5);
@@ -264,7 +271,7 @@ function drawPanIcon(ctx) {
     ctx.closePath();
     ctx.fill();
 
-    // Right arrowhead
+    // 右箭头。
     ctx.beginPath();
     ctx.moveTo(12, 0);
     ctx.lineTo(7, -5);
@@ -276,8 +283,9 @@ function drawPanIcon(ctx) {
 }
 
 function drawGridIcon(ctx) {
-    // Clean 3×3 grid (4 lines each direction). Reads as "show / hide
-    // the cell grid" at a glance.
+    // 简洁的 3×3 网格（横竖各 4 条线），一眼能看懂是
+    // "显示/隐藏网线"的开关。
+
     ctx.save();
     ctx.translate(22, 22);
     ctx.strokeStyle = INK;
@@ -295,13 +303,13 @@ function drawGridIcon(ctx) {
 }
 
 function drawSaveIcon(ctx) {
-    // Floppy disk — the file-save icon decades of users instantly grok.
-    // Top metal shutter (with the small write-protect notch) and a
-    // bottom label area with two text-rules to suggest "writeable".
+    // 软盘——几十年来"保存文件"的通用图标。
+    // 上方是金属推杆 + 一个写保护缺口，
+    // 下方是带两条线的纸质标签，暗示"可写入"。
     ctx.save();
     ctx.translate(22, 22);
 
-    // Disk body with the classic chamfered upper-right corner
+    // 软盘外形：经典的"右上角斜切一刀"轮廓。
     ctx.fillStyle = INK;
     ctx.beginPath();
     ctx.moveTo(-11, -11);
@@ -312,17 +320,17 @@ function drawSaveIcon(ctx) {
     ctx.closePath();
     ctx.fill();
 
-    // Top metal shutter
+    // 顶部金属推杆。
     ctx.fillStyle = PAPER;
     ctx.fillRect(-7, -11, 13, 7);
-    // Shutter notch (the rectangular slot on the metal slider)
+    // 推杆上的写保护缺口。
     ctx.fillStyle = INK;
     ctx.fillRect(2, -10, 2.5, 5);
 
-    // Bottom paper label
+    // 下方的纸质标签。
     ctx.fillStyle = PAPER;
     ctx.fillRect(-7, -1, 14, 9);
-    // Two text-rule lines on the label
+    // 标签上的两条横线，暗示"可填写/可写入"。
     ctx.fillStyle = INK;
     ctx.fillRect(-5, 2, 10, 1);
     ctx.fillRect(-5, 5, 10, 1);
@@ -331,8 +339,8 @@ function drawSaveIcon(ctx) {
 }
 
 function drawResetIcon(ctx) {
-    // Circular refresh arrow — universal "reset / start over" icon.
-    // ~270° arc with the gap (and arrowhead) at the upper-right.
+    // 弧形循环箭头——通用的"重来/重置"图标。
+    // 弧度约 270°，缺口和箭头都在右上角。
     ctx.save();
     ctx.translate(22, 22);
 
@@ -343,14 +351,13 @@ function drawResetIcon(ctx) {
     ctx.arc(0, 0, 9, Math.PI * 0.2, Math.PI * 1.75);
     ctx.stroke();
 
-    // Bold triangular arrowhead capping the upper-right end of the
-    // arc, with its tip pointing toward the centre so the loop reads
-    // as "circle back to the start".
+    // 弧线右上端的实心箭头，尖端指向中心，
+    // 让"绕一圈回到起点"的循环感更明显。
     ctx.fillStyle = INK;
     ctx.beginPath();
-    ctx.moveTo(2, -6);   // inner tip near the arc end
-    ctx.lineTo(10, -3);  // outer-right
-    ctx.lineTo(8, -11);  // upper-right
+    ctx.moveTo(2, -6);   // 内侧顶点，贴近弧线末端
+    ctx.lineTo(10, -3);  // 外右
+    ctx.lineTo(8, -11);  // 右上
     ctx.closePath();
     ctx.fill();
 

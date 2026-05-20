@@ -1,13 +1,18 @@
 /**
  * AssetPalette.js
  *
- * Bottom palette: category tabs + horizontal swatch row. Each swatch
- * displays the asset's generated bitmap so the player sees exactly what
- * they'll be placing.
+ * 右侧素材面板：上面一排"分类标签"，下面是当前分类下的素材方块网格。
+ * 每个方块直接展示加载后的素材图，让玩家所见即所得。
  *
- * 二次开发备注：底部素材栏的“分类名”和“素材名”都来自 assetManifest.js。
- * 想换素材图时，通常只需要替换 assets/ 下同名 PNG，并在 manifest 里调整
- * name / filename / sizeScale。
+ * 数据来源：分类、素材名、id 都从 assetManifest.js 读取。
+ *
+ * 二次开发常见入口：
+ *   - 换素材图：只需替换 assets/ 下同名 PNG，本文件不用动。
+ *   - 改素材中文名 / 占地：直接改 assetManifest.js。
+ *   - 想改方块尺寸或缩略图清晰度：调整 _renderGrid() 里的 max = 56
+ *     这个上限，以及 styles.css 里 .swatch 的 width / height。
+ *   - 想加搜索框 / 收藏夹之类：在 _renderGrid() 渲染之前过滤一下
+ *     ASSET_MANIFEST 即可。
  */
 
 import { ASSET_MANIFEST, CATEGORIES, CATEGORY_LABELS } from '../assets/assetManifest.js';
@@ -30,6 +35,8 @@ export class AssetPalette {
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'tab';
+            // 想显示英文分类名时可以恢复下面这行；
+            // 当前用 CATEGORY_LABELS 提供的中文标签。
             // btn.textContent = c[0].toUpperCase() + c.slice(1);
             btn.textContent = CATEGORY_LABELS[c] ?? c;
             btn.addEventListener('click', () => {
@@ -85,7 +92,8 @@ export class AssetPalette {
         for (const [c, btn] of this.tabButtons) {
             btn.classList.toggle('active', c === this.game.category);
         }
-        // Re-render grid only when category changed.
+        // 仅在"当前显示的素材集合"和"应该显示的集合"不一致时才整体重渲，
+        // 避免每次选择素材都重新生成所有 DOM（性能 + 滚动位置都更稳）。
         const visibleIds = Array.from(this.gridEl.querySelectorAll('.swatch'))
             .map(el => el.dataset.assetId);
         const expectedIds = ASSET_MANIFEST
